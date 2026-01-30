@@ -1252,7 +1252,7 @@ class AudioConfig:
     SAMPLE_WIDTH = 2
     MODEL_NAME = os.environ.get("FSTT_ONNX_ASR_MODEL", "gigaam-v3-e2e-rnnt")
     ALT_ASR_MODEL = os.environ.get(
-        "FSTT_ALT_ASR_MODEL", "onnx-community/whisper-medium.en_timestamped"
+        "FSTT_ONNX_ASR_MODEL_ALT", "onnx-community/whisper-medium.en_timestamped"
     )
     WAV_FILE = "recording.wav"
 
