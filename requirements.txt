@@ -6,3 +6,5 @@ python-dotenv==1.2.1
 pyclip==0.7.0
 PyGObject==3.54.5
 onnxruntime==1.23.2
+optimum[onnxruntime]
+transformers
