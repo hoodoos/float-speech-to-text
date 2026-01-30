@@ -1267,8 +1267,8 @@ class UIConfig:
     ICON_PROCESSING = "⋯"
     ICON_CLOSE = "✕"
     ICON_RESTART = "↻"
-    ICON_PP_ON = "☑"  # Квадрат с галочкой
-    ICON_PP_OFF = "☐"  # Пустой квадрат
+    ICON_ALT_MODEL_ON = "EN"  # Whisper (English model)
+    ICON_ALT_MODEL_OFF = "RU"  # Gigaam (Russian model)
     BOX_SPACING = 5
     BOX_MARGIN = 10
     MOUSE_BUTTON_LEFT = 1
@@ -2220,11 +2220,13 @@ class RecognitionWindow:
         # 2. Обновляем кнопку PP button
         if self.pp_button:
             icon = (
-                self.config.ui.ICON_PP_ON
+                self.config.ui.ICON_ALT_MODEL_ON
                 if state.llm_enabled
-                else self.config.ui.ICON_PP_OFF
+                else self.config.ui.ICON_ALT_MODEL_OFF
             )
             self.pp_button.set_label(icon)
+            # Block model toggle during recording/processing
+            self.pp_button.set_sensitive(state.phase == Phase.IDLE)
 
         # 3. Обновляем позицию на основе относительных координат из состояния
         if not self.is_dragging and state.current_monitor_name and self.window:
@@ -2413,9 +2415,9 @@ class RecognitionWindow:
 
         # Кнопка пост-обработки
         initial_pp_icon = (
-            self.config.ui.ICON_PP_ON
+            self.config.ui.ICON_ALT_MODEL_ON
             if self.config.settings.LLM_ENABLED
-            else self.config.ui.ICON_PP_OFF
+            else self.config.ui.ICON_ALT_MODEL_OFF
         )
         self.pp_button = Gtk.Button(label=initial_pp_icon)
         self.pp_button.get_style_context().add_class(
