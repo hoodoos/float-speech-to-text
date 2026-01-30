@@ -229,11 +229,11 @@ class Reducer:
                 recognized_text=None,
             )
 
-        # Успех - определяем следующую фазу на основе настройки LLM
+        # Успех - переходим в IDLE (POST_PROCESSING phase removed)
         return replace(
             state,
             recognized_text=action.text,
-            phase=Phase.POST_PROCESSING if state.llm_enabled else Phase.IDLE,
+            phase=Phase.IDLE,
             error=None,
         )
 
@@ -595,10 +595,10 @@ class FinalizeEffect:
     ) -> None:
         """Обработка триггеров финализации"""
 
-        # Случай 1: ASRDone + LLM выключен => финализировать распознанным текстом
-        if isinstance(action, ASRDone) and not next.llm_enabled:
+        # Случай 1: ASRDone => финализировать распознанным текстом (LLM feature removed)
+        if isinstance(action, ASRDone):
             if action.text and next.phase == Phase.IDLE:
-                log("✅ Финализация после ASR (без LLM)")
+                log("✅ Финализация после ASR")
                 text = self.smart_process(next, action.text)
                 self.copy_paste(next, text)
             return
@@ -2070,7 +2070,7 @@ class RecognitionWindow:
         effects = [
             StartRecordingEffect(speech),
             ASREffect(speech, AsyncTaskRunner),
-            LLMEffect(post_processing, AsyncTaskRunner),
+            # LLMEffect(post_processing, AsyncTaskRunner),  # TODO: LLM post-processing disabled - model toggle repurposed for ASR selection
             FinalizeEffect(clipboard, paste, GLib, config),
             RestartEffect(speech, AsyncTaskRunner, AppSettings.RESTART_DELAY_SEC),
             SettingsPersistenceEffect(settings_file),
