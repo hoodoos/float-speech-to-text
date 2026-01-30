@@ -13,6 +13,8 @@ import numpy as np
 import sounddevice as sd
 import onnx_asr
 import threading
+from optimum.onnxruntime import ORTModelForSpeechSeq2Seq
+from transformers import AutoProcessor, pipeline as hf_pipeline
 import signal
 import json
 import os
@@ -470,10 +472,11 @@ class ASREffect:
             and prev.phase == Phase.RECORDING
             and next.phase == Phase.PROCESSING
         ):
+            use_alt_model = next.llm_enabled
 
             def task():
                 try:
-                    text = self.speech.stop_and_recognize()
+                    text = self.speech.stop_and_recognize(use_alt_model=use_alt_model)
                     return (text, None)
                 except Exception as e:
                     log(f"❌ Ошибка ASR: {e}")
@@ -1248,6 +1251,9 @@ class AudioConfig:
     DTYPE = "int16"
     SAMPLE_WIDTH = 2
     MODEL_NAME = os.environ.get("FSTT_ONNX_ASR_MODEL", "gigaam-v3-e2e-rnnt")
+    ALT_ASR_MODEL = os.environ.get(
+        "FSTT_ALT_ASR_MODEL", "onnx-community/whisper-medium.en_timestamped"
+    )
     WAV_FILE = "recording.wav"
 
 
@@ -1760,6 +1766,8 @@ class SpeechService:
         self.is_recording = False
         self.stream = None
         self.model = None
+        self.whisper_model = None
+        self.whisper_pipeline = None
         self._stream_lock = threading.Lock()
 
         # Запускаем поток сразу при инициализации
@@ -1821,7 +1829,7 @@ class SpeechService:
             self.is_recording = False
             self.recording = []
 
-    def stop_and_recognize(self):
+    def stop_and_recognize(self, use_alt_model=False):
         """Останавливает запись и распознаёт речь"""
         if not self.is_recording:
             return None
@@ -1847,7 +1855,7 @@ class SpeechService:
         self._save_wav(audio_data)
 
         # Распознаём речь
-        return self._recognize()
+        return self._recognize(use_alt_model=use_alt_model)
 
     def _save_wav(self, audio_data):
         """Сохраняет аудио данные в WAV файл"""
@@ -1861,8 +1869,11 @@ class SpeechService:
 
         log(f"✅ Файл сохранён")
 
-    def _recognize(self):
+    def _recognize(self, use_alt_model=False):
         """Распознаёт речь из WAV файла"""
+        if use_alt_model:
+            return self._recognize_whisper()
+
         log(f"🧠 Загружаю модель {self.config.audio.MODEL_NAME}...")
 
         try:
@@ -1882,6 +1893,42 @@ class SpeechService:
             return text
         except Exception as e:
             log(f"❌ Ошибка распознавания: {e}")
+            return None
+
+    def _load_whisper_model(self):
+        """Загружает Whisper модель (lazy loading)"""
+        if self.whisper_pipeline is not None:
+            return
+
+        model_id = self.config.audio.ALT_ASR_MODEL
+        log(f"🧠 Загружаю Whisper модель {model_id}...")
+
+        self.whisper_model = ORTModelForSpeechSeq2Seq.from_pretrained(
+            model_id, subfolder="onnx"
+        )
+        processor = AutoProcessor.from_pretrained(model_id)
+
+        self.whisper_pipeline = hf_pipeline(
+            "automatic-speech-recognition",
+            model=self.whisper_model,
+            tokenizer=processor.tokenizer,
+            feature_extractor=processor.feature_extractor,
+        )
+        log("✅ Whisper модель загружена")
+
+    def _recognize_whisper(self):
+        """Распознаёт речь через Whisper"""
+        try:
+            self._load_whisper_model()
+            result = self.whisper_pipeline(self.config.audio.WAV_FILE)
+            text = result["text"]
+            if text and text.strip():
+                log(f"📝 Распознано (Whisper): {text}")
+            else:
+                log("⚠️  Whisper вернул пустой текст")
+            return text
+        except Exception as e:
+            log(f"❌ Ошибка Whisper: {e}")
             return None
 
 
