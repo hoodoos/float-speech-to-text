@@ -697,27 +697,17 @@ class SettingsPersistenceEffect:
         self, action: Action, prev: State, next: State, dispatch: Callable
     ) -> None:
         """Обработка изменений настроек"""
-        # Проверяем, изменились ли настройки
-        settings_changed = (
-            prev.llm_enabled != next.llm_enabled
-            or prev.auto_paste != next.auto_paste
-            or prev.copy_method != next.copy_method
-            or prev.smart_text_processing != next.smart_text_processing
-            or prev.smart_short_phrase_words != next.smart_short_phrase_words
-        )
-
-        if settings_changed:
+        # Сохраняем только при изменении llm_enabled (переключатель модели EN/RU)
+        if prev.llm_enabled != next.llm_enabled:
             self._save_settings(next)
 
     def _save_settings(self, state: State) -> None:
         """Сохраняет настройки в JSON файл"""
         try:
+            # Сохраняем только динамические настройки UI (переключатель модели EN/RU)
+            # Остальные настройки читаются из .env при каждом запуске
             settings = {
                 "llm_enabled": state.llm_enabled,
-                "auto_paste": state.auto_paste,
-                "copy_method": state.copy_method,
-                "smart_text_processing": state.smart_text_processing,
-                "smart_short_phrase_words": state.smart_short_phrase_words,
             }
 
             with open(self.settings_file, "w", encoding="utf-8") as f:
@@ -2129,16 +2119,14 @@ class RecognitionWindow:
         ]
 
         # Инициализируем состояние из конфигурации
+        # Только llm_enabled загружается из сохранённых настроек (переключатель модели EN/RU)
+        # Остальные настройки всегда берутся из .env
         initial_state = State(
             llm_enabled=saved_settings.get("llm_enabled", config.settings.LLM_ENABLED),
-            auto_paste=saved_settings.get("auto_paste", config.settings.AUTO_PASTE),
-            copy_method=saved_settings.get("copy_method", config.settings.COPY_METHOD),
-            smart_text_processing=saved_settings.get(
-                "smart_text_processing", config.settings.SMART_TEXT_PROCESSING
-            ),
-            smart_short_phrase_words=saved_settings.get(
-                "smart_short_phrase_words", config.settings.SMART_TEXT_SHORT_PHRASE
-            ),
+            auto_paste=config.settings.AUTO_PASTE,
+            copy_method=config.settings.COPY_METHOD,
+            smart_text_processing=config.settings.SMART_TEXT_PROCESSING,
+            smart_short_phrase_words=config.settings.SMART_TEXT_SHORT_PHRASE,
         )
 
         # Создаём хранилище
