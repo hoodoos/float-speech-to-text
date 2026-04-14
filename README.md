@@ -106,3 +106,58 @@ python3 fstt.py
 4.  **Перезапись:** Если вы оговорились, нажмите кнопку перезагрузки (↻) во время записи, чтобы сбросить текущий фрагмент и начать заново.
 5.  **Перемещение:** Окно можно перетаскивать мышью за любую область.
 
+## Windows-порт (`fstt_win.py`)
+
+GTK + GtkLayerShell — Linux-only, поэтому под Windows в репо лежит отдельный headless-вариант `fstt_win.py`. Оригинальный `fstt.py` не тронут.
+
+Чем отличается:
+
+*   **Без окна:** иконка в системном трее вместо плавающего виджета.
+*   **Глобальный хоткей:** по умолчанию `Ctrl+Shift` запускает/останавливает запись (настраивается `FSTT_HOTKEY`).
+*   **Инлайн-спиннер:** пока модель работает, в активном поле ввода печатается `Listening⠋` → `Transcribing⠋` → `Polishing⠋` (плавная анимация Unicode-брайлем, потом всё затирается и подставляется финальный текст). Отключается галочкой в трее.
+*   **Плагинируемая LLM-полировка:** выбирается через `FSTT_LLM_BACKEND`:
+    *   `claude` (по умолчанию) — через CLI `claude` по Claude-подписке (саб Max/Pro), stream-json stdin/stdout, один долгоживущий процесс с авто-ротацией каждые N ходов
+    *   `ollama` — локальный LLM через HTTP, токены стримятся прямо в поле ввода
+    *   `api` — прямой Anthropic API через SDK (требует `ANTHROPIC_API_KEY`)
+
+### Установка
+
+```powershell
+pip install -r requirements-win.txt
+```
+
+Если нужна полировка через Claude-саб — дополнительно поставь [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` в PATH). Если через Ollama — поставь [Ollama](https://ollama.com/download) и стяни модель (`ollama pull qwen2.5:7b` или что нравится).
+
+### Запуск
+
+```powershell
+python fstt_win.py
+```
+
+### Переменные окружения (в `.env` или сессионно)
+
+| Переменная | По умолчанию | Назначение |
+|---|---|---|
+| `FSTT_HOTKEY` | `ctrl+shift` | Формат как в python `keyboard` |
+| `FSTT_LLM_ENABLED` | `true` | Включить LLM-полировку |
+| `FSTT_LLM_BACKEND` | `claude` | `claude` \| `ollama` \| `api` |
+| `FSTT_AUTO_PASTE` | `true` | Авто-Ctrl+V после расшифровки |
+| `FSTT_PLACEHOLDER` | `true` | Печатать спиннер в активное поле |
+| `FSTT_CLAUDE_MODEL` | `haiku` | Модель для бэкенда `claude` |
+| `FSTT_CLAUDE_EFFORT` | `low` | `low`/`medium`/`high`/`max` |
+| `FSTT_OLLAMA_URL` | `http://localhost:11434` | Эндпоинт Ollama |
+| `FSTT_OLLAMA_MODEL` | `qwen2.5:7b` | Модель Ollama |
+| `FSTT_API_MODEL` | `claude-haiku-4-5` | Модель через Anthropic API |
+| `ANTHROPIC_API_KEY` | — | Нужен только для `FSTT_LLM_BACKEND=api` |
+
+### Использование
+
+1.  **Ctrl+Shift** — начать запись. В активном поле появится `Listening⠋`.
+2.  **Ctrl+Shift** ещё раз — стоп. Спиннер переключится на `Transcribing⠋`, затем `Polishing⠋`.
+3.  Финальный текст вставляется в поле автоматически (если `Auto-paste` включён) и одновременно кладётся в буфер обмена.
+4.  Все тумблеры (`LLM polish`, `Auto-paste`, `Loading dots`) доступны из меню трея по правой кнопке.
+
+### Замечания
+
+*   Bare `ctrl+shift` как хоткей без триггер-клавиши — штука капризная. Если конфликтует с переключением раскладки или зажимается — поменяй на `FSTT_HOTKEY=ctrl+shift+space` или похожее.
+*   Библиотека `keyboard` под Windows иногда требует права администратора, чтобы хоткей ловился во всех приложениях.
