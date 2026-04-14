@@ -1,0 +1,10 @@
+numpy
+sounddevice
+onnx-asr==0.10.0
+huggingface_hub
+onnxruntime==1.23.2
+python-dotenv==1.2.1
+pyperclip
+keyboard
+pystray
+pillow
