@@ -47,7 +47,7 @@ MODEL_NAME        = os.environ.get("FSTT_ONNX_ASR_MODEL", "gigaam-v3-e2e-rnnt")
 SAMPLE_RATE       = int(os.environ.get("FSTT_SAMPLE_RATE", "16000"))
 HOTKEY            = os.environ.get("FSTT_HOTKEY", "ctrl+shift")
 
-LLM_ENABLED       = _env_bool("FSTT_LLM_ENABLED", True)
+LLM_ENABLED       = _env_bool("FSTT_LLM_ENABLED", False)
 LLM_PROMPT_FILE   = os.environ.get("FSTT_LLM_PROMPT_FILE", "prompt.md")
 LLM_TIMEOUT_SEC   = int(os.environ.get("FSTT_LLM_TIMEOUT_SEC", "60"))
 LLM_BACKEND       = os.environ.get("FSTT_LLM_BACKEND", "claude")  # claude | ollama | api
