@@ -148,6 +148,9 @@ venv.bak/
 .spyderproject
 .spyproject
 
+# macOS
+.DS_Store
+
 # Rope project settings
 .ropeproject
 

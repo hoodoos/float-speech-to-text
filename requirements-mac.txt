@@ -1,0 +1,11 @@
+numpy==2.4.0
+sounddevice==0.5.3
+onnx-asr==0.10.0
+onnxruntime==1.23.2
+python-dotenv==1.2.1
+pyperclip
+pynput
+rumps
+pyobjc-framework-AVFoundation
+anthropic
+huggingface_hub
