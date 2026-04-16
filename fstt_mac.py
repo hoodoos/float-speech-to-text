@@ -51,6 +51,8 @@ def _env_bool(k: str, d: bool) -> bool:
 MODEL_NAME        = os.environ.get("FSTT_ONNX_ASR_MODEL", "gigaam-v3-e2e-rnnt")
 SAMPLE_RATE       = int(os.environ.get("FSTT_SAMPLE_RATE", "16000"))
 HOTKEY            = os.environ.get("FSTT_HOTKEY", "cmd+shift")
+HOTKEY_MIN_HOLD_MS = int(os.environ.get("FSTT_HOTKEY_MIN_HOLD_MS", "30"))
+HOTKEY_MAX_HOLD_MS = int(os.environ.get("FSTT_HOTKEY_MAX_HOLD_MS", "2000"))
 
 LLM_ENABLED       = _env_bool("FSTT_LLM_ENABLED", False)
 LLM_PROMPT_FILE   = os.environ.get("FSTT_LLM_PROMPT_FILE", "prompt.md")
@@ -663,34 +665,73 @@ def _parse_hotkey(spec: str) -> set:
 
 
 class HotkeyListener:
-    def __init__(self, spec: str, on_trigger):
+    """Fires `on_trigger()` only when all required modifiers are held
+    together cleanly: no other key (including non-required modifiers)
+    touched during the hold, then at least one of the required mods
+    released. Matches chord combos like Cmd+Shift+Left would dirty the
+    hold and skip the trigger."""
+
+    def __init__(self, spec: str, on_trigger,
+                 min_hold_ms: int = 30, max_hold_ms: int = 2000):
         self.required = _parse_hotkey(spec)
         self.on_trigger = on_trigger
-        self._held: set = set()
-        self._armed = True
+        self.min_hold_sec = min_hold_ms / 1000.0
+        self.max_hold_sec = max_hold_ms / 1000.0
+        self._held_mods: set = set()
+        self._hold_start: Optional[float] = None
+        self._dirty = False
+        self._lock = threading.Lock()
         self._listener: Optional[pynput_keyboard.Listener] = None
 
     def _on_press(self, key):
-        mod = _KEY_TO_MOD.get(key)
-        if mod is None:
-            # Non-modifier pressed: disarm so holding a letter doesn't
-            # mask the rising edge of the next pure-modifier combo.
-            self._armed = False
-            return
-        self._held.add(mod)
-        if self._armed and self.required.issubset(self._held):
-            self._armed = False
-            try:
-                self.on_trigger()
-            except Exception as e:
-                log.exception("hotkey handler failed: %s", e)
+        with self._lock:
+            mod = _KEY_TO_MOD.get(key)
+            if mod is None:
+                # Non-modifier pressed during hold → combo, not us
+                if self._hold_start is not None:
+                    self._dirty = True
+                return
+            if mod not in self.required:
+                # Other modifier (e.g. Alt while required is Cmd+Shift)
+                if self._hold_start is not None:
+                    self._dirty = True
+                return
+            self._held_mods.add(mod)
+            if self._hold_start is None and self.required.issubset(self._held_mods):
+                self._hold_start = time.time()
+                self._dirty = False
 
     def _on_release(self, key):
-        mod = _KEY_TO_MOD.get(key)
-        if mod is not None:
-            self._held.discard(mod)
-        if not self.required.issubset(self._held):
-            self._armed = True
+        should_fire = False
+        with self._lock:
+            mod = _KEY_TO_MOD.get(key)
+            if mod is None or mod not in self.required:
+                return
+            self._held_mods.discard(mod)
+            if self._hold_start is None:
+                return
+            held = time.time() - self._hold_start
+            dirty = self._dirty
+            self._hold_start = None
+            self._dirty = False
+            if dirty:
+                log.debug("hotkey hold dirtied — skipping")
+                return
+            if held < self.min_hold_sec:
+                log.debug("hotkey hold too short (%.0fms)", held * 1000)
+                return
+            if held > self.max_hold_sec:
+                log.debug("hotkey hold too long (%.0fms) — ignored", held * 1000)
+                return
+            should_fire = True
+        if should_fire:
+            threading.Thread(target=self._safe_trigger, daemon=True).start()
+
+    def _safe_trigger(self):
+        try:
+            self.on_trigger()
+        except Exception as e:
+            log.exception("hotkey handler failed: %s", e)
 
     def start(self):
         self._listener = pynput_keyboard.Listener(
@@ -698,6 +739,9 @@ class HotkeyListener:
         )
         self._listener.daemon = True
         self._listener.start()
+        log.info("hotkey listener active (%s, press & release, min %dms, max %dms)",
+                 "+".join(sorted(self.required)),
+                 int(self.min_hold_sec * 1000), int(self.max_hold_sec * 1000))
 
     def stop(self):
         if self._listener is not None:
@@ -728,7 +772,11 @@ class App(rumps.App):
         self.recorder = Recorder(SAMPLE_RATE)
         self.prompt = load_prompt()
         self.work_q: queue.Queue = queue.Queue()
-        self.hotkey = HotkeyListener(HOTKEY, self.on_hotkey)
+        self.hotkey = HotkeyListener(
+            HOTKEY, self.on_hotkey,
+            min_hold_ms=HOTKEY_MIN_HOLD_MS,
+            max_hold_ms=HOTKEY_MAX_HOLD_MS,
+        )
 
         self._mi_hotkey = rumps.MenuItem(f"Hotkey: {HOTKEY}")
         self._mi_hotkey.set_callback(None)  # disabled
@@ -956,7 +1004,6 @@ class App(rumps.App):
     def start_background(self):
         self._check_permissions()
         self.hotkey.start()
-        log.info("hotkey registered: %s", HOTKEY)
         threading.Thread(target=self.asr.load, daemon=True).start()
         threading.Thread(target=self._warmup_llm, daemon=True).start()
 
