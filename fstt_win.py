@@ -46,6 +46,8 @@ def _env_bool(k: str, d: bool) -> bool:
 MODEL_NAME        = os.environ.get("FSTT_ONNX_ASR_MODEL", "gigaam-v3-e2e-rnnt")
 SAMPLE_RATE       = int(os.environ.get("FSTT_SAMPLE_RATE", "16000"))
 HOTKEY            = os.environ.get("FSTT_HOTKEY", "ctrl+shift")
+HOTKEY_MIN_HOLD_MS = int(os.environ.get("FSTT_HOTKEY_MIN_HOLD_MS", "30"))
+HOTKEY_MAX_HOLD_MS = int(os.environ.get("FSTT_HOTKEY_MAX_HOLD_MS", "2000"))
 
 LLM_ENABLED       = _env_bool("FSTT_LLM_ENABLED", False)
 LLM_PROMPT_FILE   = os.environ.get("FSTT_LLM_PROMPT_FILE", "prompt.md")
@@ -72,7 +74,7 @@ AUTO_PASTE        = _env_bool("FSTT_AUTO_PASTE", True)
 PLACEHOLDER       = _env_bool("FSTT_PLACEHOLDER", True)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.environ.get("FSTT_LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -487,6 +489,73 @@ class Recorder:
 
 
 # ---------- Output ----------
+# Scan codes for keys that form our hotkey (`ctrl+shift`).
+_CTRL_SCANS  = {29, 97}   # left/right ctrl
+_SHIFT_SCANS = {42, 54}   # left/right shift
+
+
+class HotkeyWatcher:
+    """Fires `on_trigger()` only when Ctrl and Shift are pressed together
+    cleanly: both held, no other key touched during the hold, then at
+    least one of them released. This eliminates races with combos like
+    Ctrl+Shift+Left — any foreign key during the hold "dirties" the
+    sequence and the trigger is skipped."""
+
+    def __init__(self, on_trigger, min_hold_ms=30, max_hold_ms=2000):
+        self.on_trigger = on_trigger
+        self.min_hold_sec = min_hold_ms / 1000.0
+        self.max_hold_sec = max_hold_ms / 1000.0
+        self._ctrl_down = False
+        self._shift_down = False
+        self._hold_start: Optional[float] = None
+        self._dirty = False
+        self._lock = threading.Lock()
+
+    def start(self):
+        keyboard.hook(self._on_event)
+        log.info("hotkey watcher active (ctrl+shift, min %dms, max %dms)",
+                 int(self.min_hold_sec * 1000), int(self.max_hold_sec * 1000))
+
+    def _on_event(self, evt):
+        down = evt.event_type == "down"
+        scan = evt.scan_code
+        with self._lock:
+            if scan in _CTRL_SCANS:
+                self._ctrl_down = down
+                self._on_modifier_change()
+                return
+            if scan in _SHIFT_SCANS:
+                self._shift_down = down
+                self._on_modifier_change()
+                return
+            # Any other keydown while we're holding both → combo, not us
+            if down and self._hold_start is not None:
+                self._dirty = True
+
+    def _on_modifier_change(self):
+        both_down = self._ctrl_down and self._shift_down
+        if both_down and self._hold_start is None:
+            self._hold_start = time.time()
+            self._dirty = False
+            return
+        if not both_down and self._hold_start is not None:
+            held = time.time() - self._hold_start
+            dirty = self._dirty
+            self._hold_start = None
+            self._dirty = False
+            if dirty:
+                log.debug("hotkey hold dirtied — skipping")
+                return
+            if held < self.min_hold_sec:
+                log.debug("hotkey hold too short (%.0fms)", held * 1000)
+                return
+            if held > self.max_hold_sec:
+                log.debug("hotkey hold too long (%.0fms) — ignored", held * 1000)
+                return
+            # Clean press and release of bare Ctrl+Shift → fire
+            threading.Thread(target=self.on_trigger, daemon=True).start()
+
+
 def _release_mods():
     """Force-release modifier keys to avoid stuck-key states when our
     keyboard ops run while the user still holds the hotkey."""
@@ -751,15 +820,11 @@ class App:
 
         def quit_(icon, item):
             log.info("quitting")
-            try:
-                keyboard.remove_hotkey(self._hk)
-            except Exception:
-                pass
             icon.stop()
             os._exit(0)
 
         return pystray.Menu(
-            pystray.MenuItem(f"Hotkey: {HOTKEY}", None, enabled=False),
+            pystray.MenuItem("Hotkey: Ctrl+Shift (press & release)", None, enabled=False),
             pystray.MenuItem("LLM polish", toggle_llm, checked=checked_llm),
             pystray.MenuItem("Auto-paste", toggle_paste, checked=checked_paste),
             pystray.MenuItem("Loading dots", toggle_placeholder, checked=checked_placeholder),
@@ -779,8 +844,12 @@ class App:
             log.error("warmup failed: %s", e)
 
     def run(self):
-        self._hk = keyboard.add_hotkey(HOTKEY, self.on_hotkey)
-        log.info("hotkey registered: %s", HOTKEY)
+        self._watcher = HotkeyWatcher(
+            self.on_hotkey,
+            min_hold_ms=HOTKEY_MIN_HOLD_MS,
+            max_hold_ms=HOTKEY_MAX_HOLD_MS,
+        )
+        self._watcher.start()
         threading.Thread(target=self.asr.load, daemon=True).start()
         threading.Thread(target=self._warmup_llm, daemon=True).start()
         self.icon = pystray.Icon(
